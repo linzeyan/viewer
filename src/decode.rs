@@ -131,20 +131,28 @@ const FALLBACK_FAMILY: &str = "PingFang TC";
 /// the font directories takes tens of milliseconds.
 fn svg_options() -> &'static usvg::Options<'static> {
     static OPTIONS: OnceLock<usvg::Options<'static>> = OnceLock::new();
-    OPTIONS.get_or_init(|| {
-        let mut options = usvg::Options::default();
-        options.fontdb_mut().load_system_fonts();
-        options.font_family = FALLBACK_FAMILY.to_owned();
-        options.font_resolver = usvg::FontResolver {
-            select_font: Box::new(select_font),
-            select_fallback: select_fallback(),
-        };
-        options
-    })
+    OPTIONS.get_or_init(|| svg_options_with(FALLBACK_FAMILY))
+}
+
+/// Takes the family as a parameter so tests can use one that the machine has: CI runners
+/// don't install PingFang.
+fn svg_options_with(fallback: &'static str) -> usvg::Options<'static> {
+    let mut options = usvg::Options::default();
+    options.fontdb_mut().load_system_fonts();
+    options.font_family = fallback.to_owned();
+    options.font_resolver = usvg::FontResolver {
+        select_font: Box::new(move |font, db| select_font(font, db, fallback)),
+        select_fallback: select_fallback(fallback),
+    };
+    options
 }
 
 /// usvg's default selector, with the fallback family tried before its last resort (serif).
-fn select_font(font: &usvg::Font, db: &mut Arc<fontdb::Database>) -> Option<fontdb::ID> {
+fn select_font(
+    font: &usvg::Font,
+    db: &mut Arc<fontdb::Database>,
+    fallback: &str,
+) -> Option<fontdb::ID> {
     let mut families: Vec<fontdb::Family> = font
         .families()
         .iter()
@@ -157,7 +165,7 @@ fn select_font(font: &usvg::Font, db: &mut Arc<fontdb::Database>) -> Option<font
             usvg::FontFamily::Named(name) => fontdb::Family::Name(name),
         })
         .collect();
-    families.extend([fontdb::Family::Name(FALLBACK_FAMILY), fontdb::Family::Serif]);
+    families.extend([fontdb::Family::Name(fallback), fontdb::Family::Serif]);
     let stretch = match font.stretch() {
         usvg::FontStretch::UltraCondensed => fontdb::Stretch::UltraCondensed,
         usvg::FontStretch::ExtraCondensed => fontdb::Stretch::ExtraCondensed,
@@ -184,12 +192,12 @@ fn select_font(font: &usvg::Font, db: &mut Arc<fontdb::Database>) -> Option<font
 
 /// For a character the chosen font lacks, prefers the fallback family in the same weight;
 /// usvg's default picks the first font that has it.
-fn select_fallback() -> usvg::FallbackSelectionFn<'static> {
+fn select_fallback(fallback: &'static str) -> usvg::FallbackSelectionFn<'static> {
     let default = usvg::FontResolver::default_fallback_selector();
     Box::new(move |c, used, db| {
         let weight = used.first().and_then(|id| db.face(*id)).map(|face| face.weight);
         let preferred = db.query(&fontdb::Query {
-            families: &[fontdb::Family::Name(FALLBACK_FAMILY)],
+            families: &[fontdb::Family::Name(fallback)],
             weight: weight.unwrap_or_default(),
             ..Default::default()
         });
@@ -358,43 +366,70 @@ mod tests {
         assert_eq!((row[250].r, row[250].b), (0, 255));
     }
 
-    /// Each glyph's text and whether it was drawn with the fallback family.
-    fn glyphs_in_fallback_font(svg: &str) -> Vec<(String, bool)> {
-        let tree = usvg::Tree::from_str(svg, svg_options()).unwrap();
+    /// A family with Chinese and Latin that usvg's own fallback wouldn't pick for Chinese
+    /// next to Arial, so the tests fail without the custom resolver. Taken from the
+    /// machine's fonts: which families exist differs, and CI runners have no PingFang.
+    fn installed_fallback_family() -> &'static str {
+        let mut db = Arc::new(fontdb::Database::new());
+        Arc::make_mut(&mut db).load_system_fonts();
+        let arial = db.query(&fontdb::Query {
+            families: &[fontdb::Family::Name("Arial")],
+            ..Default::default()
+        });
+        let arial = arial.expect("Arial is not installed");
+        let default = usvg::FontResolver::default_fallback_selector()('中', &[arial], &mut db)
+            .expect("no installed font has Chinese");
+        let default_name = &db.face(default).unwrap().families[0].0;
+        let family = db
+            .faces()
+            .filter(|face| !face.families.iter().any(|(name, _)| name == default_name))
+            .find(|face| has_char(&db, face.id, '中') && has_char(&db, face.id, 'A'))
+            .map(|face| face.families[0].0.clone())
+            .expect("the test needs a second font family with Chinese");
+        family.leak()
+    }
+
+    /// Each glyph's text and whether it was drawn with `family`.
+    fn glyphs_in_family(svg: &str, family: &'static str) -> Vec<(String, bool)> {
+        let tree = usvg::Tree::from_str(svg, &svg_options_with(family)).unwrap();
         let db = tree.fontdb();
         let mut glyphs = Vec::new();
         for node in tree.root().children() {
             let usvg::Node::Text(text) = node else { continue };
             for glyph in text.layouted().iter().flat_map(|span| &span.positioned_glyphs) {
                 let face = db.face(glyph.font).unwrap();
-                let fallback = face.families.iter().any(|(name, _)| name == FALLBACK_FAMILY);
-                glyphs.push((glyph.text.clone(), fallback));
+                let in_family = face.families.iter().any(|(name, _)| name == family);
+                glyphs.push((glyph.text.clone(), in_family));
             }
         }
-        assert!(!glyphs.is_empty(), "no text was laid out; is {FALLBACK_FAMILY} installed?");
+        assert!(!glyphs.is_empty(), "no text was laid out");
         glyphs
     }
 
     #[test]
     fn text_in_an_uninstalled_font_uses_the_fallback_family() {
-        let glyphs = glyphs_in_fallback_font(
+        let family = installed_fallback_family();
+        let glyphs = glyphs_in_family(
             r#"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="50">
             <text y="40" font-family="No Such Font" font-size="30">Ab中文</text></svg>"#,
+            family,
         );
-        assert!(glyphs.iter().all(|(_, fallback)| *fallback), "{glyphs:?}");
+        assert!(glyphs.iter().all(|(_, in_family)| *in_family), "{family}: {glyphs:?}");
     }
 
     #[test]
     fn characters_missing_from_an_installed_font_come_from_the_fallback_family() {
-        // Arial is on both platforms and has no Chinese. usvg reshapes the whole run with
-        // the fallback font when that font covers all of it, so only the Chinese is checked.
-        let glyphs = glyphs_in_fallback_font(
+        // Arial has no Chinese. usvg reshapes the whole run with the fallback font when
+        // that font covers all of it, so only the Chinese is checked.
+        let family = installed_fallback_family();
+        let glyphs = glyphs_in_family(
             r#"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="50">
             <text y="40" font-family="Arial" font-size="30">Ab中文</text></svg>"#,
+            family,
         );
         let chinese: Vec<_> = glyphs.iter().filter(|(t, _)| !t.is_ascii()).collect();
-        assert_eq!(chinese.len(), 2, "{glyphs:?}");
-        assert!(chinese.iter().all(|(_, fallback)| *fallback), "{glyphs:?}");
+        assert_eq!(chinese.len(), 2, "{family}: {glyphs:?}");
+        assert!(chinese.iter().all(|(_, in_family)| *in_family), "{family}: {glyphs:?}");
     }
 
     #[test]
