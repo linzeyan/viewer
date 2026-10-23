@@ -1,0 +1,112 @@
+export component MainWindow inherits Window {
+    // Title bar and taskbar on Windows; macOS shows the bundle's icon instead.
+    icon: @image-url("icon.png");
+    in property <string> window-title: "Viewer";
+    // Already scaled to physical pixels by Rust; shown 1:1 (see docs/spec.md).
+    in property <image> frame;
+    in property <length> frame-x;
+    in property <length> frame-y;
+    in property <length> frame-width;
+    in property <length> frame-height;
+    in property <string> message;
+    in property <bool> can-pan;
+
+    callback navigate(int);
+    callback resized();
+    // Positions are logical pixels relative to the window.
+    callback zoom-by(/* wheel delta-y */ length, length, length);
+    callback pan-by(length, length);
+    callback toggle-zoom(length, length);
+    callback pinch-started();
+    callback pinch(/* scale since start */ float, length, length);
+
+    title: window-title;
+    preferred-width: 1200px;
+    preferred-height: 800px;
+    background: #1c1c1c;
+    forward-focus: keys;
+
+    changed width => {
+        root.resized();
+    }
+    changed height => {
+        root.resized();
+    }
+
+    keys := FocusScope {
+        width: 100%;
+        height: 100%;
+
+        key-pressed(event) => {
+            if event.text == Key.LeftArrow || event.text == Key.UpArrow {
+                root.navigate(-1);
+                return accept;
+            }
+            if event.text == Key.RightArrow || event.text == Key.DownArrow {
+                root.navigate(1);
+                return accept;
+            }
+            reject
+        }
+
+        Image {
+            x: root.frame-x;
+            y: root.frame-y;
+            width: root.frame-width;
+            height: root.frame-height;
+            source: root.frame;
+            image-fit: fill;
+            image-rendering: pixelated;
+        }
+
+        ScaleRotateGestureHandler {
+            started => {
+                root.pinch-started();
+            }
+            updated => {
+                root.pinch(self.scale, self.center.x, self.center.y);
+            }
+
+            TouchArea {
+                property <length> last-x;
+                property <length> last-y;
+
+                mouse-cursor: self.pressed && root.can-pan ? MouseCursor.grabbing
+                    : root.can-pan ? MouseCursor.grab : MouseCursor.default;
+
+                scroll-event(event) => {
+                    root.zoom-by(event.delta-y, self.mouse-x, self.mouse-y);
+                    accept
+                }
+                pointer-event(event) => {
+                    if event.kind == PointerEventKind.down {
+                        self.last-x = self.mouse-x;
+                        self.last-y = self.mouse-y;
+                    }
+                }
+                moved => {
+                    if self.pressed {
+                        root.pan-by(self.mouse-x - self.last-x, self.mouse-y - self.last-y);
+                        self.last-x = self.mouse-x;
+                        self.last-y = self.mouse-y;
+                    }
+                }
+                double-clicked => {
+                    root.toggle-zoom(self.mouse-x, self.mouse-y);
+                }
+            }
+        }
+
+        Text {
+            width: 100%;
+            height: 100%;
+            visible: root.message != "";
+            text: root.message;
+            color: #9a9a9a;
+            font-size: 15px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            wrap: word-wrap;
+        }
+    }
+}

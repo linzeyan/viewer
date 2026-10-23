@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>com.zeyanlin.viewer</string>
+	<key>CFBundleName</key>
+	<string>Viewer</string>
+	<key>CFBundleDisplayName</key>
+	<string>Viewer</string>
+	<key>CFBundleExecutable</key>
+	<string>viewer</string>
+	<key>CFBundleIconFile</key>
+	<string>Viewer</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<!-- CFBundleShortVersionString and CFBundleVersion come from Cargo.toml (scripts/bundle-macos.sh). -->
+	<key>LSMinimumSystemVersion</key>
+	<string>12.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Image</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<!-- Alternate: listed under "Open With" without taking over until the user picks it. -->
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.jpeg</string>
+				<string>public.png</string>
+				<string>com.compuserve.gif</string>
+				<string>org.webmproject.webp</string>
+				<string>com.microsoft.bmp</string>
+				<string>public.tiff</string>
+				<string>public.svg-image</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>

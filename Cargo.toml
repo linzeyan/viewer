@@ -1,0 +1,29 @@
+[package]
+name = "viewer"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+fast_image_resize = "6.1"
+image = { version = "0.25.10", default-features = false, features = ["bmp", "gif", "jpeg", "png", "tiff", "webp"] }
+resvg = "0.48"
+# Software renderer only: GPU renderers keep several copies of every image (see docs/spike.md).
+slint = { version = "1.18.1", default-features = false, features = ["std", "backend-winit", "renderer-software", "compat-1-2", "unstable-winit-030"] }
+ttf-parser = { version = "0.25.1", default-features = false, features = ["std"] }
+
+[build-dependencies]
+embed-resource = "3.0.12"
+slint-build = "1.18.1"
+
+[dev-dependencies]
+tempfile = "3"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSResponder"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSEnumerator", "NSString", "NSURL"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-registry = "0.6.1"
+windows-sys = { version = "0.61", features = ["Win32_UI_Shell", "Win32_System_Console"] }

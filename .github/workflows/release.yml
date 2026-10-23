@@ -1,0 +1,92 @@
+name: Release
+
+# Push a tag that matches Cargo.toml's version, one tag per push: GitHub sends no tag
+# events when more than three tags arrive in one push.
+#   git tag v0.1.0 && git push origin refs/tags/v0.1.0
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Tag matches Cargo.toml
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json, sys; print(json.load(sys.stdin)["packages"][0]["version"])')
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match Cargo.toml version $version"
+            exit 1
+          fi
+      - run: cargo test --release
+      - run: bash scripts/bundle-macos.sh
+      # ditto keeps the bundle's signature and extended attributes; zip would drop them.
+      - run: ditto -c -k --keepParent target/release/Viewer.app "Viewer-${GITHUB_REF_NAME#v}-macos-arm64.zip"
+      - uses: actions/upload-artifact@v5
+        with:
+          name: macos
+          path: Viewer-*-macos-arm64.zip
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            target: x86_64-pc-windows-msvc
+          - arch: arm64
+            target: aarch64-pc-windows-msvc
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      # The runner is x64, so only that build's tests can run here.
+      - if: matrix.arch == 'x64'
+        run: cargo test --release --target ${{ matrix.target }}
+      - run: cargo build --release --target ${{ matrix.target }}
+      - run: cp "target/${{ matrix.target }}/release/viewer.exe" "viewer-${GITHUB_REF_NAME#v}-windows-${{ matrix.arch }}.exe"
+      - uses: actions/upload-artifact@v5
+        with:
+          name: windows-${{ matrix.arch }}
+          path: viewer-*-windows-${{ matrix.arch }}.exe
+          if-no-files-found: error
+
+  release:
+    needs: [macos, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -l dist
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            --notes "$(cat <<'EOF'
+          ## 安裝
+
+          **macOS（Apple Silicon）**：解壓縮後把 Viewer.app 拖進「應用程式」。App 沒有經過 Apple 公證，第一次開啟會被擋下：到「系統設定 › 隱私權與安全性」按「強制打開」，之後就能正常開啟。要設成預設 App：在 Finder 對圖檔「取得資訊 › 打開檔案的應用程式」選 Viewer，再按「全部更改」。
+
+          **Windows**：x64 電腦下載 `-windows-x64.exe`，ARM 電腦下載 `-windows-arm64.exe`。把 exe 放到固定的位置，執行一次 `viewer.exe --register`，Viewer 就會出現在「開啟檔案」的清單裡；選擇 Viewer，再勾「一律使用」。之後若要移動或刪除 exe，先執行 `viewer.exe --unregister`。
+          EOF
+          )"
